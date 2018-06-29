@@ -11,9 +11,11 @@ import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.os.ResultReceiver;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils;
@@ -32,6 +34,7 @@ import com.xiaoniu.wifihotspotdemo.thread.ListenerThread;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.Socket;
@@ -60,7 +63,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     /**
      * 端口号
      */
-    private static final int PORT = 54321;
+    private static final int PORT = 12345;
 
     private static final int WIFICIPHER_NOPASS = 1;
     private static final int WIFICIPHER_WEP = 2;
@@ -90,7 +93,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         initVIew();
         initBroadcastReceiver();
 
-        wifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
+        //wifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
+        wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         listenerThread = new ListenerThread(PORT, handler);
         listenerThread.start();
     }
@@ -205,24 +209,41 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             wifiManager.setWifiEnabled(false);
         }
         WifiConfiguration config = new WifiConfiguration();
+        config.allowedAuthAlgorithms.clear();
+        config.allowedGroupCiphers.clear();
+        config.allowedKeyManagement.clear();
+        config.allowedPairwiseCiphers.clear();
+        config.allowedProtocols.clear();
         config.SSID = WIFI_HOTSPOT_SSID;
         config.preSharedKey = "123456789";
-        config.hiddenSSID = true;
+        //config.hiddenSSID = true;
         config.allowedAuthAlgorithms
                 .set(WifiConfiguration.AuthAlgorithm.OPEN);//开放系统认证
+        config.allowedProtocols.set(WifiConfiguration.Protocol.RSN);
+        config.allowedProtocols.set(WifiConfiguration.Protocol.WPA);
         config.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.TKIP);
         config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
+        //config.allowedKeyManagement.set(6);//MIUI
         config.allowedPairwiseCiphers
                 .set(WifiConfiguration.PairwiseCipher.TKIP);
         config.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.CCMP);
         config.allowedPairwiseCiphers
                 .set(WifiConfiguration.PairwiseCipher.CCMP);
         config.status = WifiConfiguration.Status.ENABLED;
+        boolean enable = false;
         //通过反射调用设置热点
         try {
-            Method method = wifiManager.getClass().getMethod(
-                    "setWifiApEnabled", WifiConfiguration.class, Boolean.TYPE);
-            boolean enable = (Boolean) method.invoke(wifiManager, config, true);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+                setWifiApEnabledForAndroidO(getApplicationContext(),true);
+                ConnectivityManager connectivityManager = (ConnectivityManager) getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+                NetworkInfo networkInfo = connectivityManager.getActiveNetworkInfo();
+                enable = true;
+            } else {
+                Method method = wifiManager.getClass().getMethod(
+                        "setWifiApEnabled", WifiConfiguration.class, boolean.class);
+                enable = true;
+            }
+
             if (enable) {
                 textview.setText("热点已开启 SSID:" + WIFI_HOTSPOT_SSID + " password:123456789");
             } else {
@@ -233,17 +254,57 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             textview.setText("创建热点失败");
         }
     }
+    //8.0wifi
+    public static void setWifiApEnabledForAndroidO(Context context, boolean isEnable){
+        ConnectivityManager connManager = (ConnectivityManager) context.getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        Field iConnMgrField = null;
+        try {
+            iConnMgrField = connManager.getClass().getDeclaredField("mService");
+            iConnMgrField.setAccessible(true);
+            Object iConnMgr = iConnMgrField.get(connManager);
+            Class<?> iConnMgrClass = Class.forName(iConnMgr.getClass().getName());
+
+            if(isEnable){
+                Method startTethering = iConnMgrClass.getMethod("startTethering", int.class, ResultReceiver.class, boolean.class);
+                startTethering.invoke(iConnMgr, 0, null, true);
+            }else{
+                Method startTethering = iConnMgrClass.getMethod("stopTethering", int.class);
+                startTethering.invoke(iConnMgr, 0);
+            }
+
+        } catch (NoSuchFieldException e) {
+            e.printStackTrace();
+        } catch (NoSuchMethodException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        } catch (InvocationTargetException e) {
+            e.printStackTrace();
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
 
     /**
      * 关闭WiFi热点
      */
     public void closeWifiHotspot() {
         try {
-            Method method = wifiManager.getClass().getMethod("getWifiApConfiguration");
-            method.setAccessible(true);
-            WifiConfiguration config = (WifiConfiguration) method.invoke(wifiManager);
-            Method method2 = wifiManager.getClass().getMethod("setWifiApEnabled", WifiConfiguration.class, boolean.class);
-            method2.invoke(wifiManager, config, false);
+            //Method method = wifiManager.getClass().getMethod("getWifiApConfiguration");
+            //method.setAccessible(true);
+            //WifiConfiguration config = (WifiConfiguration) method.invoke(wifiManager);
+           // Method method2 = wifiManager.getClass().getMethod("setWifiApEnabled", WifiConfiguration.class, boolean.class);
+            //method2.invoke(wifiManager, config, false);
+            Context context = getApplicationContext();
+            ConnectivityManager connManager = (ConnectivityManager) context.getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            Field iConnMgrField = null;
+            iConnMgrField = connManager.getClass().getDeclaredField("mService");
+            iConnMgrField.setAccessible(true);
+            Object iConnMgr = iConnMgrField.get(connManager);
+            Class<?> iConnMgrClass = Class.forName(iConnMgr.getClass().getName());
+            Method startTethering = iConnMgrClass.getMethod("stopTethering", int.class);
+            startTethering.invoke(iConnMgr, 0);
         } catch (NoSuchMethodException e) {
             e.printStackTrace();
         } catch (IllegalArgumentException e) {
@@ -251,6 +312,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         } catch (IllegalAccessException e) {
             e.printStackTrace();
         } catch (InvocationTargetException e) {
+            e.printStackTrace();
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        } catch (NoSuchFieldException e) {
             e.printStackTrace();
         }
         textview.setText("热点已关闭");
@@ -355,7 +420,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     final WifiInfo wifiInfo = wifiManager.getConnectionInfo();
                     text_state.setText("已连接到网络:" + wifiInfo.getSSID());
                     Log.w("AAA","wifiInfo.getSSID():"+wifiInfo.getSSID()+"  WIFI_HOTSPOT_SSID:"+WIFI_HOTSPOT_SSID);
-                    if (wifiInfo.getSSID().equals(WIFI_HOTSPOT_SSID)) {
+                    if (wifiInfo.getSSID().equals("TEST")) {
                         //如果当前连接到的wifi是热点,则开启连接线程
                         new Thread(new Runnable() {
                             @Override
@@ -389,7 +454,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         text_state.setText("连接失败");
                     }
                 }
-
             }
            /* else if (action.equals(ConnectivityManager.CONNECTIVITY_ACTION)) {
                 if (intent.getBooleanExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY, false)) {
@@ -474,5 +538,5 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
         return config;
     }
-
+    
 }
